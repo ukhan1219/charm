@@ -1,6 +1,100 @@
 @import "tailwindcss";
 
+/* Define CSS custom properties in :root first (for Tailwind to use) */
+:root {
+  /* Light mode (default) */
+  --color-background: 245 245 245; /* #f5f5f5 */
+  --color-foreground: 12 12 12; /* #0c0c0c */
+  --color-muted: 229 229 229;
+  --color-muted-foreground: 115 115 115;
+  --color-primary: 0 255 132; /* #00FF84 */
+  --color-primary-foreground: 12 12 12;
+  --color-border: 229 229 229;
+}
+
+/* Dark mode via media query */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: 12 12 12; /* #0c0c0c */
+    --color-foreground: 245 245 245; /* #f5f5f5 */
+    --color-muted: 38 38 38;
+    --color-muted-foreground: 163 163 163;
+    --color-primary: 0 255 132; /* #00FF84 */
+    --color-primary-foreground: 12 12 12;
+    --color-border: 38 38 38;
+  }
+}
+
+/* Manual light mode override */
+html.light {
+  --color-background: 245 245 245; /* #f5f5f5 */
+  --color-foreground: 12 12 12; /* #0c0c0c */
+  --color-muted: 229 229 229;
+  --color-muted-foreground: 115 115 115;
+  --color-primary: 0 255 132; /* #00FF84 */
+  --color-primary-foreground: 12 12 12;
+  --color-border: 229 229 229;
+}
+
+/* Manual dark mode override */
+html.dark {
+  --color-background: 12 12 12; /* #0c0c0c */
+  --color-foreground: 245 245 245; /* #f5f5f5 */
+  --color-muted: 38 38 38;
+  --color-muted-foreground: 163 163 163;
+  --color-primary: 0 255 132; /* #00FF84 */
+  --color-primary-foreground: 12 12 12;
+  --color-border: 38 38 38;
+}
+
+/* Override media query when class is present */
+@media (prefers-color-scheme: dark) {
+  html.light {
+    --color-background: 245 245 245; /* #f5f5f5 */
+    --color-foreground: 12 12 12; /* #0c0c0c */
+    --color-muted: 229 229 229;
+    --color-muted-foreground: 115 115 115;
+    --color-primary: 0 255 132; /* #00FF84 */
+    --color-primary-foreground: 12 12 12;
+    --color-border: 229 229 229;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  html.dark {
+    --color-background: 12 12 12; /* #0c0c0c */
+    --color-foreground: 245 245 245; /* #f5f5f5 */
+    --color-muted: 38 38 38;
+    --color-muted-foreground: 163 163 163;
+    --color-primary: 0 255 132; /* #00FF84 */
+    --color-primary-foreground: 12 12 12;
+    --color-border: 38 38 38;
+  }
+}
+
+/* Tailwind theme configuration - use space-separated RGB values */
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  
+  /* Charm Brand Colors */
+  --color-charm-primary: #00FF84;
+  --color-charm-bg: #0c0c0c;
+  
+  /* These will be overridden by the :root and html.light/html.dark selectors */
+  --color-background: 245 245 245;
+  --color-foreground: 12 12 12;
+  --color-muted: 229 229 229;
+  --color-muted-foreground: 115 115 115;
+  --color-primary: 0 255 132;
+  --color-primary-foreground: 12 12 12;
+  --color-border: 229 229 229;
+}
+
+/* Smooth transitions */
+body {
+  background-color: rgb(var(--color-background));
+  color: rgb(var(--color-foreground));
+  transition: background-color 0.3s, color 0.3s;
 }
