@@ -1,0 +1,311 @@
+import { headers } from "next/headers";
+import Stripe from "stripe";
+import { stripe } from "~/lib/integrations/stripe";
+import { env } from "~/env";
+import {
+  getPaymentByStripeInvoiceId,
+  updatePaymentStatus,
+  getStripeCustomerByUserId,
+  updateSubscriptionStatus,
+  createOrder,
+} from "~/server/db/queries";
+import { db } from "~/server/db";
+import { stripeFee, subscription as subscriptionTable } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
+
+// Disable body parsing - Stripe needs raw body for signature verification
+export const runtime = "nodejs";
+
+/**
+ * Stripe Webhook Handler
+ * 
+ * Handles all Stripe events:
+ * - invoice.payment_succeeded → Mark payment as successful, schedule next renewal
+ * - invoice.payment_failed → Pause subscription, notify user
+ * - customer.subscription.deleted → Cancel all product subscriptions
+ * - customer.subscription.updated → Handle status changes
+ * 
+ * Local dev setup:
+ *   stripe listen --forward-to localhost:3000/api/webhooks/stripe
+ *   # Copy the whsec_... key to .env as STRIPE_WEBHOOK_SECRET
+ * 
+ * Production setup:
+ *   1. Deploy app
+ *   2. Add webhook endpoint in Stripe Dashboard: https://yourdomain.com/api/webhooks/stripe
+ *   3. Select events: invoice.*, customer.subscription.*
+ *   4. Copy signing secret to Vercel env vars
+ */
+export async function POST(req: Request) {
+  const body = await req.text();
+  const headersList = await headers();
+  const signature = headersList.get("stripe-signature");
+
+  if (!signature) {
+    console.error("❌ Missing Stripe signature");
+    return Response.json({ error: "Missing signature" }, { status: 400 });
+  }
+
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    console.error("❌ STRIPE_WEBHOOK_SECRET not configured");
+    return Response.json({ error: "Webhook secret not configured" }, { status: 500 });
+  }
+
+  let event: Stripe.Event;
+
+  try {
+    // Verify webhook signature
+    event = stripe.webhooks.constructEvent(
+      body,
+      signature,
+      env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err: any) {
+    console.error(`❌ Webhook signature verification failed: ${err.message}`);
+    return Response.json({ error: `Webhook Error: ${err.message}` }, { status: 400 });
+  }
+
+  console.log(`✅ Webhook received: ${event.type}`);
+
+  // Handle different event types
+  try {
+    switch (event.type) {
+      case "invoice.payment_succeeded":
+        await handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
+        break;
+
+      case "invoice.payment_failed":
+        await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+        break;
+
+      case "invoice.created":
+        await handleInvoiceCreated(event.data.object as Stripe.Invoice);
+        break;
+
+      case "customer.subscription.deleted":
+        await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+        break;
+
+      case "customer.subscription.updated":
+        await handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
+        break;
+
+      case "payment_intent.succeeded":
+        await handlePaymentIntentSucceeded(event.data.object as Stripe.PaymentIntent);
+        break;
+
+      case "payment_intent.payment_failed":
+        await handlePaymentIntentFailed(event.data.object as Stripe.PaymentIntent);
+        break;
+
+      default:
+        console.log(`ℹ️ Unhandled event type: ${event.type}`);
+    }
+
+    return Response.json({ received: true });
+  } catch (error) {
+    console.error(`❌ Error handling webhook: ${error}`);
+    return Response.json(
+      { error: "Webhook handler failed" },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Handle invoice.payment_succeeded
+ * Payment successful → update records, schedule next renewal
+ */
+async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
+  console.log(`✅ Payment succeeded for invoice: ${invoice.id}`);
+
+  // Update payment status in database
+  const payment = await getPaymentByStripeInvoiceId(invoice.id);
+  if (payment) {
+    await updatePaymentStatus({
+      id: payment.id,
+      status: "succeeded",
+    });
+
+    console.log(`Updated payment record ${payment.id} to succeeded`);
+  }
+
+  // If this was for a subscription renewal, create order record
+  if (invoice.metadata && invoice.metadata.subscriptionIntentId) {
+    await createOrder({
+      subscriptionId: invoice.metadata.subscriptionIntentId,
+      merchant: invoice.metadata.merchant || "Unknown",
+      productUrl: invoice.metadata.productUrl || undefined,
+      orderId: invoice.metadata.orderId || undefined,
+      priceCents: invoice.amount_paid,
+      status: "succeeded",
+      receipt: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.number,
+        paidAt: invoice.status_transitions?.paid_at 
+          ? new Date(invoice.status_transitions.paid_at * 1000)
+          : new Date(),
+      },
+    });
+
+    console.log(`Created order record for subscription ${invoice.metadata.subscriptionIntentId}`);
+  }
+
+  // TODO: Send confirmation email
+  // TODO: Schedule next renewal
+}
+
+/**
+ * Handle invoice.payment_failed
+ * Payment failed → pause subscriptions, notify user, schedule retry
+ */
+async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+  console.log(`❌ Payment failed for invoice: ${invoice.id}`);
+
+  // Update payment status
+  const payment = await getPaymentByStripeInvoiceId(invoice.id);
+  if (payment) {
+    await updatePaymentStatus({
+      id: payment.id,
+      status: "failed",
+    });
+  }
+
+  // Pause affected subscription
+  if (invoice.metadata && invoice.metadata.subscriptionIntentId) {
+    const intentId = invoice.metadata.subscriptionIntentId;
+    
+    // Update subscription intent to error status
+    const { updateSubscriptionIntent } = await import("~/server/db/queries");
+    await updateSubscriptionIntent({
+      id: intentId,
+      updates: { status: "error" },
+    });
+
+    console.log(`Paused subscription intent ${intentId} due to payment failure`);
+  }
+
+  // Stripe will automatically retry failed payments based on dashboard settings
+  // TODO: Send payment failed email with retry link
+  // TODO: Log payment failure for analytics
+}
+
+/**
+ * Handle invoice.created
+ * New invoice generated → opportunity to add dynamic pricing
+ * 
+ * This is where we could add logic to fetch current product prices
+ * and adjust invoice items before finalization
+ */
+async function handleInvoiceCreated(invoice: Stripe.Invoice) {
+  console.log(`📝 Invoice created: ${invoice.id}`);
+
+  // If this is a subscription invoice (monthly cycle), we could:
+  // 1. Check if any subscriptions need price updates
+  // 2. Add new invoice items for due renewals
+  // 3. Adjust quantities based on actual deliveries
+
+  // For MVP, we append items when checkout completes (not here)
+}
+
+/**
+ * Handle customer.subscription.deleted
+ * Service subscription canceled → cancel all product subscriptions
+ */
+async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
+  console.log(`🗑️ Subscription deleted: ${subscription.id}`);
+
+  // Find user by subscription ID
+  const serviceFeeRecord = await db.query.stripeFee.findFirst({
+    where: eq(stripeFee.stripeSubscriptionId, subscription.id),
+  });
+
+  if (!serviceFeeRecord) {
+    console.log(`No service fee record found for subscription ${subscription.id}`);
+    return;
+  }
+
+  // Update stripeFee record
+  await db
+    .update(stripeFee)
+    .set({
+      status: "canceled",
+      canceledAt: new Date(),
+    })
+    .where(eq(stripeFee.id, serviceFeeRecord.id));
+
+  // Cancel all product subscriptions for this user
+  const userSubscriptions = await db.query.subscription.findMany({
+    where: eq(subscriptionTable.userId, serviceFeeRecord.userId),
+  });
+
+  for (const sub of userSubscriptions) {
+    await updateSubscriptionStatus({
+      id: sub.id,
+      status: "canceled",
+    });
+  }
+
+  console.log(`Canceled ${userSubscriptions.length} product subscriptions for user ${serviceFeeRecord.userId}`);
+}
+
+/**
+ * Handle customer.subscription.updated
+ * Subscription status changed → sync with our database
+ */
+async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
+  console.log(`🔄 Subscription updated: ${subscription.id}, status: ${subscription.status}`);
+
+  // Update stripeFee status if needed
+  const serviceFeeRecord = await db.query.stripeFee.findFirst({
+    where: eq(stripeFee.stripeSubscriptionId, subscription.id),
+  });
+
+  if (serviceFeeRecord) {
+    let status = "active";
+    if (subscription.status === "canceled") status = "canceled";
+    if (subscription.status === "past_due") status = "past_due";
+
+    await db
+      .update(stripeFee)
+      .set({ status })
+      .where(eq(stripeFee.id, serviceFeeRecord.id));
+  }
+}
+
+/**
+ * Handle payment_intent.succeeded
+ * Standalone payment succeeded (not via invoice)
+ */
+async function handlePaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent) {
+  console.log(`✅ PaymentIntent succeeded: ${paymentIntent.id}`);
+
+  // Update payment record if exists
+  const { getPaymentByStripePaymentIntentId } = await import("~/server/db/queries");
+  const payment = await getPaymentByStripePaymentIntentId(paymentIntent.id);
+  
+  if (payment) {
+    await updatePaymentStatus({
+      id: payment.id,
+      status: "succeeded",
+    });
+  }
+}
+
+/**
+ * Handle payment_intent.payment_failed
+ * Standalone payment failed
+ */
+async function handlePaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
+  console.log(`❌ PaymentIntent failed: ${paymentIntent.id}`);
+
+  const { getPaymentByStripePaymentIntentId } = await import("~/server/db/queries");
+  const payment = await getPaymentByStripePaymentIntentId(paymentIntent.id);
+  
+  if (payment) {
+    await updatePaymentStatus({
+      id: payment.id,
+      status: "failed",
+    });
+  }
+}
+

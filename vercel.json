@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/renewals/due",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}
+

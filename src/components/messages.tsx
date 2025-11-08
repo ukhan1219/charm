@@ -32,7 +32,13 @@ function PureMessages({ messages, isLoading }: MessagesProps) {
 
       {isLoading &&
         messages.length > 0 &&
-        messages[messages.length - 1]?.role === "user" && <ThinkingMessage />}
+        (messages[messages.length - 1]?.role === "user" ||
+          (messages[messages.length - 1]?.role === "assistant" &&
+            (!messages[messages.length - 1]?.parts ||
+              messages[messages.length - 1]?.parts?.length === 0 ||
+              !messages[messages.length - 1]?.parts?.some(
+                (part: any) => part.type === "text" || part.type?.startsWith("tool-result")
+              )))) && <ThinkingMessage />}
 
       <div
         ref={messagesEndRef}

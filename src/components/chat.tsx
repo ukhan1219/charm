@@ -1,7 +1,7 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
 
@@ -11,14 +11,23 @@ import { MultimodalInput } from "./multimodal-input";
  */
 export function Chat({ initialMessages = [] }: { initialMessages?: any[] }) {
   const [input, setInput] = useState("");
+  const [hasLoadedInitial, setHasLoadedInitial] = useState(false);
+  
   const chat = useChat() as any;
-  const { messages, sendMessage, stop } = chat;
+  
+  const { messages, sendMessage, stop, setMessages } = chat;
   const isGenerating = chat.isGenerating || false;
 
-  // Merge initial messages with current messages
-  const allMessages = initialMessages.length > 0 && messages.length === 0 
-    ? initialMessages 
-    : messages;
+  // Load initial messages on mount
+  useEffect(() => {
+    if (!hasLoadedInitial && initialMessages.length > 0) {
+      setMessages(initialMessages);
+      setHasLoadedInitial(true);
+    }
+  }, [hasLoadedInitial, initialMessages, setMessages]);
+
+  // Use messages from chat (preserves all history)
+  const allMessages = messages;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +38,7 @@ export function Chat({ initialMessages = [] }: { initialMessages?: any[] }) {
   };
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col bg-background">
+    <div className="flex h-[calc(100vh-4rem)] flex-col bg-background font-sans">
       {/* Messages area - subtract header height (4rem = 64px) */}
       <Messages messages={allMessages} isLoading={isGenerating} />
 

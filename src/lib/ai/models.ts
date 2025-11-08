@@ -1,6 +1,6 @@
 /**
  * Model definitions for the application
- * Using Claude 3.7 Sonnet as the primary model
+ * Using Claude 4.5 Haiku as the primary model
  */
 
 import type { ClaudeModel } from "./claude";

@@ -4,6 +4,7 @@
 :root {
   /* Light mode (default) */
   --color-background: 245 245 245; /* #f5f5f5 */
+  --color-background-rgb: 245, 245, 245; /* For rgba() usage */
   --color-foreground: 12 12 12; /* #0c0c0c */
   --color-muted: 229 229 229;
   --color-muted-foreground: 115 115 115;
@@ -16,6 +17,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-background: 12 12 12; /* #0c0c0c */
+    --color-background-rgb: 12, 12, 12; /* For rgba() usage */
     --color-foreground: 245 245 245; /* #f5f5f5 */
     --color-muted: 38 38 38;
     --color-muted-foreground: 163 163 163;
@@ -28,6 +30,7 @@
 /* Manual light mode override */
 html.light {
   --color-background: 245 245 245; /* #f5f5f5 */
+  --color-background-rgb: 245, 245, 245; /* For rgba() usage */
   --color-foreground: 12 12 12; /* #0c0c0c */
   --color-muted: 229 229 229;
   --color-muted-foreground: 115 115 115;
@@ -39,6 +42,7 @@ html.light {
 /* Manual dark mode override */
 html.dark {
   --color-background: 12 12 12; /* #0c0c0c */
+  --color-background-rgb: 12, 12, 12; /* For rgba() usage */
   --color-foreground: 245 245 245; /* #f5f5f5 */
   --color-muted: 38 38 38;
   --color-muted-foreground: 163 163 163;
@@ -51,6 +55,7 @@ html.dark {
 @media (prefers-color-scheme: dark) {
   html.light {
     --color-background: 245 245 245; /* #f5f5f5 */
+    --color-background-rgb: 245, 245, 245; /* For rgba() usage */
     --color-foreground: 12 12 12; /* #0c0c0c */
     --color-muted: 229 229 229;
     --color-muted-foreground: 115 115 115;
@@ -63,6 +68,7 @@ html.dark {
 @media (prefers-color-scheme: light) {
   html.dark {
     --color-background: 12 12 12; /* #0c0c0c */
+    --color-background-rgb: 12, 12, 12; /* For rgba() usage */
     --color-foreground: 245 245 245; /* #f5f5f5 */
     --color-muted: 38 38 38;
     --color-muted-foreground: 163 163 163;
@@ -97,4 +103,33 @@ body {
   background-color: rgb(var(--color-background));
   color: rgb(var(--color-foreground));
   transition: background-color 0.3s, color 0.3s;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure all text uses Geist by default */
+* {
+  font-family: var(--font-sans);
+}
+
+/* Code and monospace elements use Geist Mono */
+code,
+pre,
+kbd,
+samp,
+.mono,
+font-mono {
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+
+/* Navigation header with transparent background */
+.navbar-transparent {
+  background-color: rgba(var(--color-background-rgb));
+  color: rgb(var(--color-foreground));
+  transition: background-color 0.3s, color 0.3s;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }

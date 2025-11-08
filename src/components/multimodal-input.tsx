@@ -59,7 +59,7 @@ export function MultimodalInput({
         className
       )}
     >
-      <form onSubmit={handleSubmit} className="flex w-full items-end gap-2">
+      <form onSubmit={handleSubmit} className="flex w-full items-end gap-2 border-2 border-border rounded-xl p-3 border-">
         <textarea
           ref={textareaRef}
           value={input}

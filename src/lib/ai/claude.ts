@@ -12,16 +12,16 @@ const anthropic = createAnthropic({
 });
 
 /**
- * Get Claude 3.7 Sonnet model
- * Using the latest Sonnet model for best performance
+ * Get Claude 4.5 Haiku model
+ * Using the latest Haiku model for best performance
  * Note: Model identifier may need to be updated based on Anthropic's latest releases
  */
-export const claudeModel = anthropic("claude-3-7-sonnet-20250219");
+export const claudeModel = anthropic("claude-haiku-4-5-20251001");
 
 /**
- * Fallback: Claude 3.5 Sonnet (if 3.7 is not available)
+ * Fallback: Claude 3.5 Haiku (if 4.5 is not available)
  * Uncomment if 3.7 is not available:
- * export const claudeModel = anthropic("claude-3-5-sonnet-20241022");
+ * export const claudeModel = anthropic("claude-3-5-haiku-20241022");
  */
 
 /**
@@ -39,14 +39,14 @@ export interface ClaudeModel {
  */
 export const claudeModels: ClaudeModel[] = [
   {
-    id: "claude-sonnet-3-7",
-    label: "Claude 3.7 Sonnet",
-    apiIdentifier: "claude-3-7-sonnet-20250219",
-    description: "Latest Claude Sonnet model with large context window and best conversational ability. Recommended by Browserbase/Stagehand for production.",
+    id: "claude-haiku-4-5-20251001",
+    label: "Claude 4.5 Haiku",
+    apiIdentifier: "claude-haiku-4-5-20251001",
+    description: "Latest Claude Haiku model with large context window and best conversational ability. Recommended by Browserbase/Stagehand for production.",
   },
   {
     id: "claude-sonnet-3-5",
-    label: "Claude 3.5 Hauku",
+    label: "Claude 3.5 Sonnet",
     apiIdentifier: "claude-3-5-haiku-20241022",
     description: "Claude 3.5 Haiku - fallback option if 3.7 is unavailable",
   },
@@ -55,7 +55,7 @@ export const claudeModels: ClaudeModel[] = [
 /**
  * Default model identifier
  */
-export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-3-7";
+export const DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001";
 
 /**
  * Get Claude model by identifier

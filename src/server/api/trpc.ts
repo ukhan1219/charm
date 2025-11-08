@@ -6,12 +6,13 @@
  * TL;DR - This is where all the tRPC server stuff is created and plugged in. The pieces you will
  * need to use are documented accordingly near the end.
  */
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 
 import { db } from "~/server/db";
+import { getOrCreateUserByClerkId } from "~/server/db/queries";
 
 /**
  * 1. CONTEXT
@@ -26,11 +27,31 @@ import { db } from "~/server/db";
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
-  const { userId } = await auth();
+  const session = await auth();
+  const clerkUserId = session?.userId;
+
+  // Map Clerk user ID to database user UUID
+  let dbUserId: string | null = null;
+  if (clerkUserId) {
+    try {
+      const clerkUserData = await currentUser();
+      const email = clerkUserData?.emailAddresses[0]?.emailAddress || "unknown@example.com";
+      
+      const dbUser = await getOrCreateUserByClerkId({
+        clerkId: clerkUserId,
+        email,
+      });
+      
+      dbUserId = dbUser.id;
+    } catch (error) {
+      console.error("Failed to map Clerk user to database user:", error);
+    }
+  }
 
   return {
     db,
-    userId,
+    userId: dbUserId, // Database UUID, not Clerk ID
+    clerkUserId, // Keep Clerk ID for reference
     ...opts,
   };
 };

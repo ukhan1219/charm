@@ -1,7 +1,6 @@
 import "~/styles/globals.css";
 
 import {
-  ClerkProvider,
   SignInButton,
   SignUpButton,
   SignedIn,
@@ -13,6 +12,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { TRPCReactProvider } from "~/trpc/react";
 import { ThemeToggle } from "~/components/theme-toggle";
+import { NavigationHeader } from "~/components/navigation-header";
+import { ClerkThemeProvider } from "~/components/clerk-theme-provider";
 
 export const metadata: Metadata = {
   title: "Charm v2 - Subscription Management",
@@ -34,8 +35,12 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <ClerkProvider>
-      <html lang="en" className={`${geist.variable} ${geistMono.variable}`}>
+    <ClerkThemeProvider>
+      <html
+        lang="en"
+        className={`${geist.variable} ${geistMono.variable}`}
+        suppressHydrationWarning
+      >
         <head>
           <script
             dangerouslySetInnerHTML={{
@@ -50,8 +55,20 @@ export default function RootLayout({
             }}
           />
         </head>
-        <body className="bg-background text-foreground antialiased">
-          <header className="flex justify-end items-center p-4 gap-4 h-16 border-b border-border/50 bg-background">
+        <body className="font-sans bg-background text-foreground antialiased">
+          <SignedIn>
+            <NavigationHeader />
+          </SignedIn>
+
+          <TRPCReactProvider>{children}</TRPCReactProvider>
+          <ThemeToggle />
+        </body>
+      </html>
+    </ClerkThemeProvider>
+  );
+}
+
+/*
             <SignedOut>
               <SignInButton>
                 <button className="text-foreground/80 hover:text-foreground transition-colors">
@@ -64,14 +81,4 @@ export default function RootLayout({
                 </button>
               </SignUpButton>
             </SignedOut>
-            <SignedIn>
-              <UserButton />
-            </SignedIn>
-          </header>
-          <TRPCReactProvider>{children}</TRPCReactProvider>
-          <ThemeToggle />
-        </body>
-      </html>
-    </ClerkProvider>
-  );
-}
+*/

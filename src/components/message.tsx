@@ -7,6 +7,30 @@ import { SparklesIcon, LoaderIcon } from "./icons";
 import { Markdown } from "./markdown";
 
 /**
+ * Tool display names for better UX
+ */
+function getToolDisplayName(toolName?: string): string {
+  if (!toolName) return "Processing";
+  
+  const displayNames: Record<string, string> = {
+    searchProduct: "Searching for products",
+    getProductInfo: "Getting product details",
+    createSubscriptionIntent: "Creating subscription",
+    updateSubscriptionIntent: "Updating subscription",
+    pauseSubscription: "Pausing subscription",
+    resumeSubscription: "Resuming subscription",
+    cancelSubscription: "Canceling subscription",
+    getMySubscriptions: "Loading your subscriptions",
+    createAddress: "Saving address",
+    getMyAddresses: "Loading your addresses",
+    analyzeProduct: "Analyzing product page",
+    startCheckout: "Starting checkout process",
+  };
+
+  return displayNames[toolName] || toolName;
+}
+
+/**
  * Individual message component
  * Handles AI SDK v5 message format with parts array
  */
@@ -20,7 +44,7 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
     >
       <div
         className={cn(
-          "flex w-full gap-4 group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl",
+          "flex items-start w-full gap-4 group-data-[role=user]/message:ml-auto group-data-[role=user]/message:max-w-2xl",
           "group-data-[role=user]/message:w-fit"
         )}
       >
@@ -58,22 +82,37 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
             }
 
             // Tool call parts (shows what tool is being called)
-            if (part.type?.startsWith("tool-call")) {
+            // AI SDK v5 uses format: "tool-{toolName}" or "tool-call-{toolName}"
+            const isToolCall = part.type?.startsWith("tool-") && !part.type?.startsWith("tool-result");
+            if (isToolCall) {
+              // Extract tool name from type (e.g., "tool-searchProduct" -> "searchProduct")
+              const toolName = part.toolName || part.type.replace("tool-", "").replace("tool-call-", "");
+              const toolDisplayName = getToolDisplayName(toolName);
+              const toolArgs = part.args || part.input || {};
+              
               return (
                 <div
                   key={`${message.id}-${i}`}
-                  className="rounded-lg border border-border bg-muted/50 p-3 text-sm"
+                  className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-sm my-2"
                 >
-                  <div className="flex items-center gap-2 text-muted-foreground">
+                  <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
                     <LoaderIcon className="animate-spin" size={14} />
                     <span className="font-medium">
-                      Calling {part.toolName || "tool"}...
+                      🔧 {toolDisplayName}
                     </span>
                   </div>
-                  {part.args && (
-                    <pre className="mt-2 text-xs opacity-70">
-                      {JSON.stringify(part.args, null, 2)}
-                    </pre>
+                  {toolArgs && Object.keys(toolArgs).length > 0 && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      <div className="font-medium mb-1">Parameters:</div>
+                      <div className="space-y-1">
+                        {Object.entries(toolArgs).map(([key, value]) => (
+                          <div key={key} className="flex gap-2">
+                            <span className="font-mono text-blue-600 dark:text-blue-400">{key}:</span>
+                            <span className="text-foreground">{String(value)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               );
@@ -177,7 +216,7 @@ export function ThinkingMessage() {
       initial={{ y: 5, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
     >
-      <div className="flex w-full gap-4">
+      <div className="flex items-start w-full gap-4">
         <div className="flex size-8 shrink-0 items-center justify-center rounded-full ring-1 ring-border">
           <SparklesIcon size={14} className="text-primary" />
         </div>
