@@ -106,7 +106,7 @@ export async function GET(req: Request) {
  * List all agent runs for the current user
  * Optional query params: limit, offset
  */
-export async function LIST(req: Request) {
+export async function GET_LIST(req: Request) {
   const { userId: clerkUserId } = await auth();
 
   if (!clerkUserId) {

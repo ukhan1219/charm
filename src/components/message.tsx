@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { cn } from "~/lib/utils";
 import { SparklesIcon, LoaderIcon } from "./icons";
 import { Markdown } from "./markdown";
+import { AgentJobStatus } from "./agent-job-status";
 
 /**
  * Tool display names for better UX
@@ -120,6 +121,26 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
 
             // Tool result parts (shows tool output)
             if (part.type?.startsWith("tool-result")) {
+              // Special handling for tools that return runId (like startCheckout)
+              if (part.result?.runId) {
+                return (
+                  <div key={`${message.id}-${i}`} className="space-y-2">
+                    {/* Display agent job status */}
+                    <AgentJobStatus runId={part.result.runId} />
+                    
+                    {/* Also show the tool completion message if present */}
+                    {part.result.message && (
+                      <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3 text-sm">
+                        <div className="font-medium text-green-600 dark:text-green-400">
+                          ✓ {part.toolName || "Tool"} completed
+                        </div>
+                        <p className="text-xs break-all mt-2">{part.result.message}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              
               // Special handling for searchProduct results
               if (part.toolName === "searchProduct" && part.result?.products) {
                 return (

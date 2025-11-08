@@ -615,7 +615,8 @@ import type { UIMessage } from "ai";
 import { z } from "zod";
 import { claudeModel } from "~/lib/ai";
 import { db } from "~/server/db";
-import { message as messageTable, usStates } from "~/server/db/schema";
+import { message as messageTable, usStates, agentRun } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
 import {
   getOrCreateUserByClerkId,
   createSubscriptionIntent,
@@ -1053,14 +1054,12 @@ Be helpful, concise, and friendly.`,
             useNativeSubscription: z.boolean().optional().describe("Whether to use native Subscribe & Save"),
           }),
           execute: async ({ subscriptionIntentId, productUrl, addressId, useNativeSubscription }) => {
+            // Start checkout agent job in background
+            const runId = crypto.randomUUID();
+            
             try {
-              // Start checkout agent job in background
-              const runId = crypto.randomUUID();
 
-              // Import executeCheckout
-              const { executeCheckout: startCheckout } = await import("~/server/agents");
-
-              // Get address details
+              // Get address details first
               const addressData = await db.query.address.findFirst({
                 where: (address, { eq }) => eq(address.id, addressId),
               });
@@ -1072,11 +1071,32 @@ Be helpful, concise, and friendly.`,
                 };
               }
 
+              // Create agent run record FIRST so UI can poll it
+              await db.insert(agentRun).values({
+                id: runId,
+                intentId: subscriptionIntentId,
+                phase: "checkout",
+                input: {
+                  productUrl,
+                  address: {
+                    street1: addressData.street1,
+                    street2: addressData.street2 || undefined,
+                    city: addressData.city,
+                    state: addressData.state,
+                    zipCode: addressData.zipCode,
+                  },
+                  useNativeSubscription,
+                },
+                createdAt: new Date(),
+              });
+
               console.log(`🛒 Starting checkout job ${runId}`);
+
+              // Import executeCheckout
+              const { executeCheckout: startCheckout } = await import("~/server/agents");
 
               // Execute checkout (this will run with maxDuration timeout)
               // In production, use Vercel Queue for true background processing
-              // Note: Chat route doesn't create agent run beforehand, so executeCheckout will create it
               const checkoutResult = await startCheckout({
                 productUrl,
                 subscriptionIntentId, // Pass as subscriptionIntentId, not subscriptionId
@@ -1092,7 +1112,7 @@ Be helpful, concise, and friendly.`,
                   details: {}, // TODO: Get from Stripe
                 },
                 useNativeSubscription,
-                // Don't pass agentRunId here - let executeCheckout create its own
+                agentRunId: runId, // Pass the runId we created so executeCheckout updates the same record
               });
 
               // If checkout succeeded, check subscription and handle invoice
@@ -1203,8 +1223,23 @@ Be helpful, concise, and friendly.`,
               };
             } catch (error) {
               console.error("Failed to start checkout:", error);
+              
+              // Update agent run with error if we created it
+              try {
+                await db.update(agentRun)
+                  .set({
+                    phase: "failed",
+                    error: error instanceof Error ? error.message : "Failed to start checkout process",
+                    endedAt: new Date(),
+                  })
+                  .where(eq(agentRun.id, runId));
+              } catch (updateError) {
+                console.error("Failed to update agent run with error:", updateError);
+              }
+              
               return {
                 success: false,
+                runId, // Return runId so UI can still show the error status
                 error: "Failed to start checkout process",
               };
             }
