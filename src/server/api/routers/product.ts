@@ -32,7 +32,7 @@ export const productRouter = createTRPCRouter({
           success: true,
           products: results,
           count: results.length,
-          message: `Found ${results.length} products`,
+          message: `Found ${results.length} product`,
         };
       } catch (error) {
         console.error("Product search failed:", error);

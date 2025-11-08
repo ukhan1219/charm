@@ -223,7 +223,7 @@ export async function searchProduct({
     console.log(`Extracting ${merchantName} product data...`);
     // Extract product info without URLs first
     const extractResult = await stagehand.extract(
-      `Extract exactly 3 DIFFERENT products from the search results. For EACH product:
+      `Extract exactly 1 product from the search results. For the product:
 
 1. Find the product name/title text
 2. Extract the price text (if visible)

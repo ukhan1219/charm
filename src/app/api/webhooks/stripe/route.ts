@@ -10,7 +10,7 @@ import {
   createOrder,
 } from "~/server/db/queries";
 import { db } from "~/server/db";
-import { stripeFee, subscription as subscriptionTable } from "~/server/db/schema";
+import { stripeFee, subscription as subscriptionTable, subscriptionIntent as subscriptionIntentTable } from "~/server/db/schema";
 import { eq, and } from "drizzle-orm";
 
 // Disable body parsing - Stripe needs raw body for signature verification
@@ -344,20 +344,109 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
 
 /**
  * Handle invoice.created
- * New invoice generated → opportunity to add dynamic pricing
+ * New invoice generated → add active subscriptions with prorated pricing
  * 
- * This is where we could add logic to fetch current product prices
- * and adjust invoice items before finalization
+ * When Stripe generates the monthly recurring invoice, this handler:
+ * 1. Identifies the user from the customer ID
+ * 2. Gets all their active subscriptions
+ * 3. Adds invoice items for each subscription with prorated pricing
  */
 async function handleInvoiceCreated(invoice: Stripe.Invoice) {
   console.log(`📝 Invoice created: ${invoice.id}`);
 
-  // If this is a subscription invoice (monthly cycle), we could:
-  // 1. Check if any subscriptions need price updates
-  // 2. Add new invoice items for due renewals
-  // 3. Adjust quantities based on actual deliveries
+  // Only process subscription invoices (recurring monthly cycle)
+  const subscriptionId = typeof (invoice as any).subscription === 'string' 
+    ? (invoice as any).subscription 
+    : (invoice as any).subscription?.id;
+    
+  if (!subscriptionId) {
+    console.log("Not a subscription invoice, skipping");
+    return;
+  }
 
-  // For MVP, we append items when checkout completes (not here)
+  // Get customer ID
+  const customerId = typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id;
+  if (!customerId) {
+    console.log("No customer ID found on invoice");
+    return;
+  }
+
+  try {
+    // Find the user by Stripe customer ID via stripeFee table
+    const serviceFeeRecord = await db.query.stripeFee.findFirst({
+      where: eq(stripeFee.stripeSubscriptionId, subscriptionId),
+    });
+
+    if (!serviceFeeRecord) {
+      console.log(`No service fee record found for subscription ${subscriptionId}`);
+      return;
+    }
+
+    const userId = serviceFeeRecord.userId;
+    console.log(`Processing invoice for user ${userId}`);
+
+    // Get all active subscriptions for this user
+    const activeSubscriptions = await db.query.subscription.findMany({
+      where: and(
+        eq(subscriptionTable.userId, userId),
+        eq(subscriptionTable.status, "active")
+      ),
+    });
+
+    console.log(`Found ${activeSubscriptions.length} active subscriptions`);
+
+    // For each active subscription, add an invoice item
+    for (const sub of activeSubscriptions) {
+      // Skip if no price information
+      if (!sub.lastPriceCents || sub.lastPriceCents === 0) {
+        console.log(`Subscription ${sub.id} has no price, skipping`);
+        continue;
+      }
+
+      // Get subscription intent for product details
+      const intent = await db.query.subscriptionIntent.findFirst({
+        where: eq(subscriptionIntentTable.id, sub.intentId || ""),
+      });
+
+      if (!intent) {
+        console.log(`No intent found for subscription ${sub.id}, skipping`);
+        continue;
+      }
+
+      // Calculate prorated monthly amount
+      const { calculateMonthlyProratedAmount } = await import("~/lib/integrations/stripe");
+      const { totalCents, description } = calculateMonthlyProratedAmount({
+        productPriceCents: sub.lastPriceCents,
+        cadenceDays: sub.renewalFrequencyDays,
+      });
+
+      // Create invoice item
+      console.log(`💰 Adding invoice item: ${intent.title} - $${totalCents / 100} (${description})`);
+      
+      await stripe.invoiceItems.create({
+        customer: customerId,
+        invoice: invoice.id,
+        amount: totalCents,
+        currency: "usd",
+        description: `${intent.title} - ${description}`,
+        metadata: {
+          userId,
+          subscriptionId: sub.id,
+          subscriptionIntentId: intent.id,
+          productPriceCents: sub.lastPriceCents.toString(),
+          cadenceDays: sub.renewalFrequencyDays.toString(),
+          billingMonth: new Date().toISOString().slice(0, 7), // YYYY-MM
+        },
+      });
+
+      console.log(`✅ Invoice item added for subscription ${sub.id}`);
+    }
+
+    console.log(`✅ Invoice ${invoice.id} populated with ${activeSubscriptions.length} subscription items`);
+  } catch (error) {
+    console.error(`Failed to process invoice ${invoice.id}:`, error);
+    // Don't throw - let the invoice proceed even if we couldn't add items
+  }
 }
 
 /**

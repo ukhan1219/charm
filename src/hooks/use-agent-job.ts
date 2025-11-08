@@ -53,7 +53,6 @@ export function useAgentJob(runId: string | null) {
           clearInterval(pollInterval);
         }
       } catch (err) {
-        console.error("Failed to poll agent status:", err);
         setError(err instanceof Error ? err.message : "Unknown error");
         setIsPolling(false);
         clearInterval(pollInterval);

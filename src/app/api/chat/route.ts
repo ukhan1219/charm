@@ -699,16 +699,22 @@ Your primary role is to help users:
 WORKFLOW when user wants to subscribe to something:
 
 1. **Product Discovery** (if no URL provided):
-   - Use searchProduct tool to find the product
+   - Use searchProduct tool to find the product (results include price and priceCents for each product)
    - Present top results to user
    - Let them choose or refine search
-   - Get detailed info with getProductInfo if needed
+   - REMEMBER the priceCents from the selected product - you'll need it for step 2
+   - Get detailed info with getProductInfo if needed (but if it fails to extract price, use the search result price)
 
 2. **Subscription Creation**:
    - Confirm delivery frequency (in days, e.g., 30 for monthly)
    - Get delivery address (use getMyAddresses first, or createAddress if needed)
    - Extract any constraints (color, size, brand preferences)
-   - Create the subscription intent with createSubscriptionIntent
+   - CRITICAL: Always capture the product price:
+     * If using searchProduct, the search results include the price
+     * If using getProductInfo, it returns priceCents
+     * You MUST pass maxPriceCents to createSubscriptionIntent
+     * Use the price from searchProduct results if getProductInfo fails to extract it
+   - Create the subscription intent with createSubscriptionIntent (ALWAYS include maxPriceCents)
 
 3. **Final Confirmation BEFORE Checkout**:
    - After creating the subscription intent, ALWAYS show a summary with:
@@ -756,11 +762,25 @@ Be helpful, concise, and friendly.`,
               console.log(`🔍 Searching for "${query}" on ${merchant}...`);
               const results = await searchProduct({ query, merchant });
 
+              // Helper function to parse price string to cents
+              const parsePriceToCents = (priceString?: string): number | undefined => {
+                if (!priceString) return undefined;
+                const cleaned = priceString.replace(/[$,]/g, '');
+                const dollars = parseFloat(cleaned);
+                return isNaN(dollars) ? undefined : Math.round(dollars * 100);
+              };
+
+              // Add priceCents to each product result
+              const productsWithPriceCents = results.map(product => ({
+                ...product,
+                priceCents: parsePriceToCents(product.price),
+              }));
+
               return {
                 success: true,
                 count: results.length,
-                products: results.slice(0, 3), // Return top 3 results (reduced from 5 to save tokens)
-                message: `Found ${results.length} products matching "${query}" on ${merchant}`,
+                products: productsWithPriceCents.slice(0, 3), // Return top 3 results (reduced from 5 to save tokens)
+                message: `Found ${results.length} product matching "${query}" on ${merchant}`,
               };
             } catch (error: any) {
               console.error("Product search failed:", error);
@@ -802,9 +822,21 @@ Be helpful, concise, and friendly.`,
               console.log(`📦 Getting details for ${productUrl}...`);
               const details = await getProductDetails(productUrl);
 
+              // Helper function to parse price string to cents
+              const parsePriceToCents = (priceString: string): number | undefined => {
+                const cleaned = priceString.replace(/[$,]/g, '');
+                const dollars = parseFloat(cleaned);
+                return isNaN(dollars) ? undefined : Math.round(dollars * 100);
+              };
+
+              const priceCents = parsePriceToCents(details.price);
+
               return {
                 success: true,
-                product: details,
+                product: {
+                  ...details,
+                  priceCents, // Add converted price in cents
+                },
                 message: `Retrieved details for ${details.name}`,
               };
             } catch (error: any) {
@@ -829,12 +861,12 @@ Be helpful, concise, and friendly.`,
 
         // Subscription Intent Management
         createSubscriptionIntent: tool({
-          description: "Create a new subscription intent from natural language. This is the first step when user wants to subscribe to a product.",
+          description: "Create a new subscription intent from natural language. This is the first step when user wants to subscribe to a product. IMPORTANT: You should call getProductInfo first to get the product price, then pass the priceCents value as maxPriceCents to this tool.",
           inputSchema: z.object({
             title: z.string().describe("User-friendly name for the subscription (e.g., 'Monthly dish soap')"),
             productUrl: z.string().url().describe("URL of the product to subscribe to"),
             cadenceDays: z.number().int().positive().describe("How often to deliver in days (e.g., 30 for monthly)"),
-            maxPriceCents: z.number().int().optional().describe("Maximum price in cents user is willing to pay"),
+            maxPriceCents: z.number().int().optional().describe("Maximum price in cents from the product analysis (use priceCents from getProductInfo result)"),
             constraints: z.record(z.string()).optional().describe("Additional constraints like color, size, brand, etc."),
           }),
           execute: async ({ title, productUrl, cadenceDays, maxPriceCents, constraints }) => {
@@ -1072,6 +1104,7 @@ Be helpful, concise, and friendly.`,
               }
 
               // Create agent run record FIRST so UI can poll it
+              console.log(`📝 Creating agent run record with ID: ${runId}`);
               await db.insert(agentRun).values({
                 id: runId,
                 intentId: subscriptionIntentId,
@@ -1090,6 +1123,7 @@ Be helpful, concise, and friendly.`,
                 createdAt: new Date(),
               });
 
+              console.log(`✅ Agent run record created successfully`);
               console.log(`🛒 Starting checkout job ${runId}`);
 
               // Import executeCheckout
@@ -1211,7 +1245,7 @@ Be helpful, concise, and friendly.`,
                 }
               }
 
-              return {
+              const toolResult = {
                 success: checkoutResult.success,
                 runId,
                 sessionId: checkoutResult.sessionId,
@@ -1221,6 +1255,9 @@ Be helpful, concise, and friendly.`,
                   : "Checkout completed",
                 error: checkoutResult.error,
               };
+              
+              console.log(`🎯 Returning tool result with runId:`, toolResult);
+              return toolResult;
             } catch (error) {
               console.error("Failed to start checkout:", error);
               

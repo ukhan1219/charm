@@ -7,6 +7,8 @@ import { SparklesIcon, LoaderIcon } from "./icons";
 import { Markdown } from "./markdown";
 import { AgentJobStatus } from "./agent-job-status";
 
+// AgentJobStatus support enabled
+
 /**
  * Tool display names for better UX
  */
@@ -83,13 +85,96 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
             }
 
             // Tool call parts (shows what tool is being called)
-            // AI SDK v5 uses format: "tool-{toolName}" or "tool-call-{toolName}"
+            // AI SDK v5 uses format: "tool-{toolName}" with state property
             const isToolCall = part.type?.startsWith("tool-") && !part.type?.startsWith("tool-result");
             if (isToolCall) {
               // Extract tool name from type (e.g., "tool-searchProduct" -> "searchProduct")
               const toolName = part.toolName || part.type.replace("tool-", "").replace("tool-call-", "");
+              
+              // If tool has completed (state is "output-available"), show result instead of spinner
+              if (part.state === "output-available" && part.output) {
+                // Special handling for startCheckout with runId
+                if (toolName === "startCheckout" && part.output?.runId) {
+                  return (
+                    <div key={`${message.id}-${i}`} className="space-y-2">
+                      <AgentJobStatus runId={part.output.runId} />
+                      {part.output.message && (
+                        <div className="rounded-lg border border-green-500/20 bg-green-500/5 p-3 text-sm">
+                          <div className="font-medium text-green-600 dark:text-green-400">
+                            ✓ Checkout started
+                          </div>
+                          <p className="text-xs break-all mt-2">{part.output.message}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+                
+                // Special handling for searchProduct results
+                if (toolName === "searchProduct" && part.output?.products) {
+                  return (
+                    <div
+                      key={`${message.id}-${i}`}
+                      className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4"
+                    >
+                      <div className="mb-3 font-medium text-blue-600 dark:text-blue-400">
+                        🔍 Found {part.output.count} product
+                      </div>
+                      <div className="space-y-3">
+                        {part.output.products.map((product: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="rounded-lg border border-border bg-muted/50 p-3"
+                          >
+                            <div className="font-medium text-foreground mb-1">
+                              {product.name}
+                            </div>
+                            {product.price && (
+                              <div className="text-sm font-semibold text-green-600 dark:text-green-400 mb-1">
+                                {product.price}
+                              </div>
+                            )}
+                            {product.description && (
+                              <p className="text-xs text-muted-foreground mb-2">
+                                {product.description}
+                              </p>
+                            )}
+                            {product.url && (
+                              <a
+                                href={product.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                View on {product.merchant || "Website"} →
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                
+                // Default completed tool result
+                return (
+                  <div
+                    key={`${message.id}-${i}`}
+                    className="rounded-lg border border-green-500/20 bg-green-500/5 p-3 text-sm"
+                  >
+                    <div className="font-medium text-green-600 dark:text-green-400">
+                      ✓ {getToolDisplayName(toolName)} completed
+                    </div>
+                    {part.output.message && (
+                      <p className="text-xs break-all mt-2">{part.output.message}</p>
+                    )}
+                  </div>
+                );
+              }
+              
+              // Tool is still running - show spinner
               const toolDisplayName = getToolDisplayName(toolName);
-              const toolArgs = part.args || part.input || {};
+              const toolArgs = part.input || {};
               
               return (
                 <div
@@ -149,7 +234,7 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
                     className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4"
                   >
                     <div className="mb-3 font-medium text-blue-600 dark:text-blue-400">
-                      🔍 Found {part.result.count} products
+                      🔍 Found {part.result.count} product
                     </div>
                     <div className="space-y-2">
                       {part.result.products.map((product: any, idx: number) => (
