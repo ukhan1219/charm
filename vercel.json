@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/renewals/due",
-      "schedule": "0 */23 * * *"
+      "schedule": "0 */24 * * *"
     }
   ]
 }
