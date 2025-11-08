@@ -81,6 +81,25 @@ export async function POST(req: Request) {
           continue;
         }
 
+        // Check and update product price before renewal
+        if (fullSub.productId) {
+          const { checkAndUpdateProductPrice } = await import("~/server/db/queries");
+          const priceCheck = await checkAndUpdateProductPrice(fullSub.productId);
+          
+          if (priceCheck.success && priceCheck.priceChanged) {
+            console.log(`📊 Price updated for ${intent.title}: ${priceCheck.oldPriceCents}¢ → ${priceCheck.newPriceCents}¢`);
+          }
+          
+          // Refresh subscription data after potential price update
+          const updatedSub = await db.query.subscription.findFirst({
+            where: eq(subscription.id, sub.id),
+          });
+          
+          if (updatedSub) {
+            Object.assign(fullSub, updatedSub);
+          }
+        }
+
         // Execute checkout via agent
         console.log(`🛒 Executing checkout for ${intent.title}`);
         

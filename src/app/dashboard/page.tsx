@@ -2,6 +2,20 @@
 
 import { api } from "~/trpc/react";
 import { LoaderIcon } from "~/components/icons";
+import { Markdown } from "~/components/markdown";
+import { useState } from "react";
+
+/**
+ * Extract domain from URL for display
+ */
+function getDomainFromUrl(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
 
 /**
  * Dashboard with Real-Time Updates
@@ -9,6 +23,11 @@ import { LoaderIcon } from "~/components/icons";
  */
 export default function DashboardPage() {
   const utils = api.useUtils();
+
+  // Track loading states per intent
+  const [pausingIntentId, setPausingIntentId] = useState<string | null>(null);
+  const [resumingIntentId, setResumingIntentId] = useState<string | null>(null);
+  const [deletingIntentId, setDeletingIntentId] = useState<string | null>(null);
 
   // Query with real-time refetching
   const { data: dashboard, isLoading } = api.subscription.getDashboard.useQuery(undefined, {
@@ -20,6 +39,8 @@ export default function DashboardPage() {
   // Mutations with optimistic updates
   const pauseIntent = api.subscription.pauseIntent.useMutation({
     onMutate: async (variables) => {
+      setPausingIntentId(variables.intentId);
+      
       // Cancel outgoing refetches
       await utils.subscription.getDashboard.cancel();
 
@@ -47,13 +68,76 @@ export default function DashboardPage() {
       }
     },
     onSettled: () => {
+      setPausingIntentId(null);
       // Refetch after mutation
       utils.subscription.getDashboard.invalidate();
     },
   });
 
   const resumeIntent = api.subscription.resumeIntent.useMutation({
+    onMutate: async (variables) => {
+      setResumingIntentId(variables.intentId);
+      
+      // Cancel outgoing refetches
+      await utils.subscription.getDashboard.cancel();
+
+      // Snapshot previous value
+      const previousData = utils.subscription.getDashboard.getData();
+
+      // Optimistically update to new value
+      if (previousData) {
+        utils.subscription.getDashboard.setData(undefined, {
+          ...previousData,
+          intents: previousData.intents.map((intent) =>
+            intent.id === variables.intentId
+              ? { ...intent, status: "active" as const }
+              : intent
+          ),
+        });
+      }
+
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      // Rollback on error
+      if (context?.previousData) {
+        utils.subscription.getDashboard.setData(undefined, context.previousData);
+      }
+    },
     onSettled: () => {
+      setResumingIntentId(null);
+      utils.subscription.getDashboard.invalidate();
+    },
+  });
+
+  const deleteIntent = api.subscription.deleteIntent.useMutation({
+    onMutate: async (variables) => {
+      setDeletingIntentId(variables.intentId);
+      
+      // Cancel outgoing refetches
+      await utils.subscription.getDashboard.cancel();
+
+      // Snapshot previous value
+      const previousData = utils.subscription.getDashboard.getData();
+
+      // Optimistically remove from list
+      if (previousData) {
+        utils.subscription.getDashboard.setData(undefined, {
+          ...previousData,
+          intents: previousData.intents.filter((intent) => intent.id !== variables.intentId),
+        });
+      }
+
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      // Rollback on error
+      if (context?.previousData) {
+        utils.subscription.getDashboard.setData(undefined, context.previousData);
+      }
+    },
+    onSettled: () => {
+      setDeletingIntentId(null);
       utils.subscription.getDashboard.invalidate();
     },
   });
@@ -109,9 +193,9 @@ export default function DashboardPage() {
                   <p className="text-sm text-muted-foreground">
                     Every {intent.cadenceDays} days
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1 break-all">
-                    {intent.productUrl}
-                  </p>
+                  <div className="text-xs text-blue-300 mt-1">
+                    <Markdown>{`[${intent.title}](${intent.productUrl}) >`}</Markdown>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <span
@@ -129,21 +213,32 @@ export default function DashboardPage() {
                     {intent.status === "active" && (
                       <button
                         onClick={() => pauseIntent.mutate({ intentId: intent.id })}
-                        disabled={pauseIntent.isPending}
+                        disabled={pausingIntentId === intent.id}
                         className="text-xs text-yellow-600 hover:underline disabled:opacity-50"
                       >
-                        {pauseIntent.isPending ? "Pausing..." : "Pause"}
+                        {pausingIntentId === intent.id ? "Pausing..." : "Pause"}
                       </button>
                     )}
                     {intent.status === "paused" && (
                       <button
                         onClick={() => resumeIntent.mutate({ intentId: intent.id })}
-                        disabled={resumeIntent.isPending}
+                        disabled={resumingIntentId === intent.id}
                         className="text-xs text-green-600 hover:underline disabled:opacity-50"
                       >
-                        {resumeIntent.isPending ? "Resuming..." : "Resume"}
+                        {resumingIntentId === intent.id ? "Resuming..." : "Resume"}
                       </button>
                     )}
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete "${intent.title}"? This action cannot be undone.`)) {
+                          deleteIntent.mutate({ intentId: intent.id });
+                        }
+                      }}
+                      disabled={deletingIntentId === intent.id}
+                      className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                    >
+                      {deletingIntentId === intent.id ? "Deleting..." : "Delete"}
+                    </button>
                   </div>
                 </div>
               </div>

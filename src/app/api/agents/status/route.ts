@@ -106,45 +106,46 @@ export async function GET(req: Request) {
  * List all agent runs for the current user
  * Optional query params: limit, offset
  */
-export async function GET_LIST(req: Request) {
-  const { userId: clerkUserId } = await auth();
+// // TODO: THIS DOESNT WORK RN
+// export async function GET_LIST(req: Request) {
+//   const { userId: clerkUserId } = await auth();
 
-  if (!clerkUserId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+//   if (!clerkUserId) {
+//     return Response.json({ error: "Unauthorized" }, { status: 401 });
+//   }
 
-  try {
-    const { searchParams } = new URL(req.url);
-    const limit = parseInt(searchParams.get("limit") || "10");
-    const offset = parseInt(searchParams.get("offset") || "0");
+//   try {
+//     const { searchParams } = new URL(req.url);
+//     const limit = parseInt(searchParams.get("limit") || "10");
+//     const offset = parseInt(searchParams.get("offset") || "0");
 
-    // Get agent runs
-    // Note: We'd need to join with subscriptions to filter by userId
-    // For now, return all runs (in production, add proper filtering)
-    const runs = await db.query.agentRun.findMany({
-      limit,
-      offset,
-      orderBy: (agentRun, { desc }) => [desc(agentRun.createdAt)],
-    });
+//     // Get agent runs
+//     // Note: We'd need to join with subscriptions to filter by userId
+//     // For now, return all runs (in production, add proper filtering)
+//     const runs = await db.query.agentRun.findMany({
+//       limit,
+//       offset,
+//       orderBy: (agentRun, { desc }) => [desc(agentRun.createdAt)],
+//     });
 
-    return Response.json({
-      runs: runs.map((run) => ({
-        runId: run.id,
-        phase: run.phase,
-        status: run.endedAt ? (run.phase === "failed" ? "failed" : "done") : "running",
-        createdAt: run.createdAt,
-        endedAt: run.endedAt,
-      })),
-      total: runs.length,
-      limit,
-      offset,
-    });
-  } catch (error) {
-    console.error("Failed to list agent runs:", error);
-    return Response.json(
-      { error: "Failed to list agent runs" },
-      { status: 500 }
-    );
-  }
-}
+//     return Response.json({
+//       runs: runs.map((run) => ({
+//         runId: run.id,
+//         phase: run.phase,
+//         status: run.endedAt ? (run.phase === "failed" ? "failed" : "done") : "running",
+//         createdAt: run.createdAt,
+//         endedAt: run.endedAt,
+//       })),
+//       total: runs.length,
+//       limit,
+//       offset,
+//     });
+//   } catch (error) {
+//     console.error("Failed to list agent runs:", error);
+//     return Response.json(
+//       { error: "Failed to list agent runs" },
+//       { status: 500 }
+//     );
+//   }
+// }
 

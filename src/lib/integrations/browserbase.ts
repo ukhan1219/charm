@@ -215,6 +215,10 @@ export async function searchProduct({
               .describe(
                 "Brief product description or identifier to help locate it",
               ),
+            url: z
+              .string()
+              .optional()
+              .describe("Product URL/href if available from the search results"),
           }),
         )
         .max(3), // Enforce max 3 products

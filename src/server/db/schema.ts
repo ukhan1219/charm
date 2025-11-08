@@ -99,6 +99,9 @@ export const product = createTable("product", (d) => ({
   description: d.text(),
   imageUrl: d.text(),
   merchant: d.varchar({ length: 128 }), // e.g., "Amazon", "Target"
+  currentPriceCents: d.integer(), // Current price in cents
+  lastPriceCheckAt: d.timestamp({ withTimezone: true }), // Last time price was checked
+  priceUpdatedAt: d.timestamp({ withTimezone: true }), // Last time price was updated
   createdAt: d.timestamp({ withTimezone: true }).notNull().defaultNow(),
 }));
 
@@ -115,9 +118,10 @@ export const subscriptionIntent = createTable("subscription_intent", (d) => ({
   cadenceDays: d.integer().notNull(), // Renewal frequency in days
   maxPriceCents: d.integer(), // Optional price cap
   constraints: d.jsonb(), // { color?: string, size?: string, etc. }
-  status: d.varchar({ length: 32 }).notNull().default("active"), // active, paused, error
+  status: d.varchar({ length: 32 }).notNull().default("active"), // active, paused, canceled, error
   createdAt: d.timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: d.timestamp({ withTimezone: true }).notNull().defaultNow(),
+  canceledAt: d.timestamp({ withTimezone: true }), // When the subscription was canceled
 }));
 
 export type SubscriptionIntent = InferSelectModel<typeof subscriptionIntent>;
@@ -135,6 +139,7 @@ export const subscription = createTable("subscription", (d) => ({
   createdAt: d.timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: d.timestamp({ withTimezone: true }).notNull().defaultNow(),
   nextRenewalAt: d.timestamp({ withTimezone: true }),
+  canceledAt: d.timestamp({ withTimezone: true }), // When the subscription was canceled
 }));
 
 export type Subscription = InferSelectModel<typeof subscription>;

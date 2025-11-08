@@ -896,7 +896,8 @@ Be helpful, concise, and friendly.`,
           inputSchema: z.object({}),
           execute: async () => {
             try {
-              const intents = await getSubscriptionIntentsByUserId(dbUser.id);
+              // Exclude canceled subscriptions by default
+              const intents = await getSubscriptionIntentsByUserId(dbUser.id, { includeCanceled: false });
               const subscriptions = await getSubscriptionsByUserId(dbUser.id);
               return {
                 intents,
@@ -1040,7 +1041,7 @@ Be helpful, concise, and friendly.`,
             }
           },
         }),
-
+        // TODO: IMPLEMENT analyzeProductSubscriptionCapability tool
         // Agent Job Management
         analyzeProduct: tool({
           description: "Analyze a product page to determine subscription capability and pricing. Use this when you need detailed information about whether a product has native subscription options.",
@@ -1124,6 +1125,46 @@ Be helpful, concise, and friendly.`,
               });
 
               console.log(`✅ Agent run record created successfully`);
+              
+              // Check and update product price before first order
+              console.log(`💰 Checking product price before checkout...`);
+              const { getSubscriptionIntentById, getProductPriceFromUrl, getOrCreateProduct, updateSubscriptionIntent } = await import("~/server/db/queries");
+              
+              const intent = await getSubscriptionIntentById(subscriptionIntentId);
+              if (!intent) {
+                return {
+                  success: false,
+                  error: "Subscription intent not found",
+                };
+              }
+
+              // Fetch current product price
+              const currentPriceCents = await getProductPriceFromUrl(intent.productUrl);
+              
+              if (currentPriceCents !== null) {
+                console.log(`📊 Current product price: ${currentPriceCents}¢`);
+                
+                // Create or update product with current price
+                const product = await getOrCreateProduct({
+                  name: intent.title,
+                  url: intent.productUrl,
+                  currentPriceCents,
+                });
+                
+                // Update intent with current price if different
+                if (intent.maxPriceCents !== currentPriceCents) {
+                  await updateSubscriptionIntent({
+                    id: subscriptionIntentId,
+                    updates: {
+                      maxPriceCents: currentPriceCents,
+                    },
+                  });
+                  console.log(`✅ Updated intent price: ${intent.maxPriceCents}¢ → ${currentPriceCents}¢`);
+                }
+              } else {
+                console.warn(`⚠️ Could not fetch current price, using intent price: ${intent.maxPriceCents}¢`);
+              }
+
               console.log(`🛒 Starting checkout job ${runId}`);
 
               // Import executeCheckout
@@ -1192,7 +1233,7 @@ Be helpful, concise, and friendly.`,
                       needsSubscription: true,
                       checkoutUrl,
                       stripeSessionId,
-                      message: `Checkout completed! Please complete your subscription setup to enable automatic monthly billing. Subscription checkout URL: ${checkoutUrl}`,
+                      message: `Checkout completed! Please complete your subscription setup to enable automatic monthly billing then say done to add your invoice. Subscription checkout URL: ${checkoutUrl}`,
                     };
                   } catch (error) {
                     console.error("❌ Failed to create subscription checkout:", error);

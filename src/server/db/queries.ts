@@ -84,12 +84,14 @@ export async function getOrCreateProduct({
   description,
   imageUrl,
   merchant,
+  currentPriceCents,
 }: {
   name: string;
   url: string;
   description?: string;
   imageUrl?: string;
   merchant?: string;
+  currentPriceCents?: number;
 }) {
   const { product } = await import("./schema");
   
@@ -99,6 +101,24 @@ export async function getOrCreateProduct({
   });
 
   if (existing) {
+    // Update price if provided and different
+    if (currentPriceCents !== undefined && currentPriceCents !== existing.currentPriceCents) {
+      await db
+        .update(product)
+        .set({
+          currentPriceCents,
+          lastPriceCheckAt: new Date(),
+          priceUpdatedAt: new Date(),
+        })
+        .where(eq(product.id, existing.id));
+      
+      return {
+        ...existing,
+        currentPriceCents,
+        lastPriceCheckAt: new Date(),
+        priceUpdatedAt: new Date(),
+      };
+    }
     return existing;
   }
 
@@ -111,6 +131,9 @@ export async function getOrCreateProduct({
       description,
       imageUrl,
       merchant,
+      currentPriceCents,
+      lastPriceCheckAt: currentPriceCents !== undefined ? new Date() : null,
+      priceUpdatedAt: currentPriceCents !== undefined ? new Date() : null,
       createdAt: new Date(),
     })
     .returning();
@@ -127,6 +150,123 @@ export async function getOrCreateProduct({
  */
 export async function getAllProducts() {
   return db.query.product.findMany();
+}
+
+/**
+ * Get product price from URL using Browserbase
+ */
+export async function getProductPriceFromUrl(productUrl: string): Promise<number | null> {
+  try {
+    const { getProductDetails } = await import("~/lib/integrations/browserbase");
+    
+    console.log(`🔍 Fetching current price for: ${productUrl}`);
+    const details = await getProductDetails(productUrl);
+    
+    if (!details.price) {
+      console.warn(`No price found for product: ${productUrl}`);
+      return null;
+    }
+
+    // Parse price string to cents
+    const cleaned = details.price.replace(/[$,]/g, '');
+    const dollars = parseFloat(cleaned);
+    const priceCents = isNaN(dollars) ? null : Math.round(dollars * 100);
+    
+    console.log(`💰 Current price: ${details.price} (${priceCents}¢)`);
+    return priceCents;
+  } catch (error) {
+    console.error(`Failed to fetch price for ${productUrl}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Check and update product price
+ * Fetches current price from product URL, compares with stored price, updates if changed
+ */
+export async function checkAndUpdateProductPrice(productId: string): Promise<{
+  success: boolean;
+  priceChanged: boolean;
+  oldPriceCents?: number;
+  newPriceCents?: number;
+  error?: string;
+}> {
+  const { product } = await import("./schema");
+  
+  try {
+    // Get product
+    const productData = await db.query.product.findFirst({
+      where: eq(product.id, productId),
+    });
+
+    if (!productData) {
+      return {
+        success: false,
+        priceChanged: false,
+        error: "Product not found",
+      };
+    }
+
+    // Fetch current price
+    const currentPriceCents = await getProductPriceFromUrl(productData.url);
+    
+    if (currentPriceCents === null) {
+      // Failed to fetch price, but update lastPriceCheckAt
+      await db
+        .update(product)
+        .set({
+          lastPriceCheckAt: new Date(),
+        })
+        .where(eq(product.id, productId));
+      
+      return {
+        success: false,
+        priceChanged: false,
+        error: "Failed to fetch current price",
+      };
+    }
+
+    const oldPriceCents = productData.currentPriceCents;
+    const priceChanged = oldPriceCents !== currentPriceCents;
+
+    // Update product with current price
+    await db
+      .update(product)
+      .set({
+        currentPriceCents,
+        lastPriceCheckAt: new Date(),
+        priceUpdatedAt: priceChanged ? new Date() : productData.priceUpdatedAt,
+      })
+      .where(eq(product.id, productId));
+
+    if (priceChanged) {
+      console.log(`📊 Price changed for product ${productId}: ${oldPriceCents}¢ → ${currentPriceCents}¢`);
+      
+      // Update all subscriptions using this product
+      const { subscription } = await import("./schema");
+      await db
+        .update(subscription)
+        .set({
+          lastPriceCents: currentPriceCents,
+          updatedAt: new Date(),
+        })
+        .where(eq(subscription.productId, productId));
+    }
+
+    return {
+      success: true,
+      priceChanged,
+      oldPriceCents: oldPriceCents ?? undefined,
+      newPriceCents: currentPriceCents,
+    };
+  } catch (error) {
+    console.error(`Error checking price for product ${productId}:`, error);
+    return {
+      success: false,
+      priceChanged: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
 }
 
 // ============================================================================
@@ -173,11 +313,24 @@ export async function createSubscriptionIntent({
 
 /**
  * Get subscription intents for a user
+ * By default, excludes canceled intents
  */
-export async function getSubscriptionIntentsByUserId(userId: string) {
+export async function getSubscriptionIntentsByUserId(
+  userId: string,
+  options?: { includeCanceled?: boolean }
+) {
   const { subscriptionIntent } = await import("./schema");
+  const { and, ne } = await import("drizzle-orm");
+  
+  const conditions = [eq(subscriptionIntent.userId, userId)];
+  
+  // Exclude canceled intents unless explicitly requested
+  if (!options?.includeCanceled) {
+    conditions.push(ne(subscriptionIntent.status, "canceled"));
+  }
+  
   return db.query.subscriptionIntent.findMany({
-    where: eq(subscriptionIntent.userId, userId),
+    where: and(...conditions),
     orderBy: (subscriptionIntent, { desc }) => [desc(subscriptionIntent.createdAt)],
   });
 }
@@ -205,7 +358,7 @@ export async function updateSubscriptionIntent({
     cadenceDays?: number;
     maxPriceCents?: number;
     constraints?: Record<string, any>;
-    status?: "active" | "paused" | "error";
+    status?: "active" | "paused" | "canceled" | "error";
   };
 }) {
   const { subscriptionIntent } = await import("./schema");
@@ -221,11 +374,101 @@ export async function updateSubscriptionIntent({
 }
 
 /**
- * Delete subscription intent
+ * Delete subscription intent (soft delete - marks as canceled)
  */
 export async function deleteSubscriptionIntent(id: string) {
   const { subscriptionIntent } = await import("./schema");
-  return db.delete(subscriptionIntent).where(eq(subscriptionIntent.id, id));
+  
+  // Soft delete: update status to canceled instead of deleting
+  await db
+    .update(subscriptionIntent)
+    .set({
+      status: "canceled",
+      canceledAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(subscriptionIntent.id, id));
+  
+  // Also cancel any linked subscriptions
+  const { subscription } = await import("./schema");
+  await db
+    .update(subscription)
+    .set({
+      status: "canceled",
+      canceledAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(subscription.intentId, id));
+  
+  console.log(`Soft deleted intent ${id} and linked subscriptions`);
+}
+
+/**
+ * Sync subscription intent changes to linked subscriptions
+ * Updates subscription status, frequency, and price when intent changes
+ */
+export async function syncIntentToSubscriptions(intentId: string) {
+  const { subscription, subscriptionIntent } = await import("./schema");
+  
+  // Get the intent
+  const intent = await db.query.subscriptionIntent.findFirst({
+    where: eq(subscriptionIntent.id, intentId),
+  });
+
+  if (!intent) {
+    console.warn(`Intent ${intentId} not found for sync`);
+    return;
+  }
+
+  // Find all subscriptions linked to this intent
+  const linkedSubscriptions = await db.query.subscription.findMany({
+    where: eq(subscription.intentId, intentId),
+  });
+
+  if (linkedSubscriptions.length === 0) {
+    console.log(`No subscriptions linked to intent ${intentId}`);
+    return;
+  }
+
+  // Update all linked subscriptions with intent changes
+  for (const sub of linkedSubscriptions) {
+    const updates: {
+      status?: "active" | "paused" | "canceled";
+      renewalFrequencyDays?: number;
+      lastPriceCents?: number;
+      updatedAt: Date;
+      canceledAt?: Date;
+    } = {
+      updatedAt: new Date(),
+    };
+
+    // Sync status (including canceled)
+    if (intent.status === "active" || intent.status === "paused" || intent.status === "canceled") {
+      updates.status = intent.status;
+      
+      // Set canceledAt timestamp if status is canceled
+      if (intent.status === "canceled") {
+        updates.canceledAt = intent.canceledAt || new Date();
+      }
+    }
+
+    // Sync frequency if changed
+    if (intent.cadenceDays !== sub.renewalFrequencyDays) {
+      updates.renewalFrequencyDays = intent.cadenceDays;
+    }
+
+    // Sync price if changed
+    if (intent.maxPriceCents && intent.maxPriceCents !== sub.lastPriceCents) {
+      updates.lastPriceCents = intent.maxPriceCents;
+    }
+
+    await db
+      .update(subscription)
+      .set(updates)
+      .where(eq(subscription.id, sub.id));
+  }
+
+  console.log(`Synced intent ${intentId} to ${linkedSubscriptions.length} subscription(s)`);
 }
 
 // ============================================================================
@@ -353,11 +596,21 @@ export async function updateSubscription({
 }
 
 /**
- * Delete subscription
+ * Delete subscription (soft delete - marks as canceled)
  */
 export async function deleteSubscription(id: string) {
   const { subscription } = await import("./schema");
-  return db.delete(subscription).where(eq(subscription.id, id));
+  
+  // Soft delete: update status to canceled instead of deleting
+  return db
+    .update(subscription)
+    .set({
+      status: "canceled",
+      canceledAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(subscription.id, id))
+    .returning();
 }
 
 // ============================================================================

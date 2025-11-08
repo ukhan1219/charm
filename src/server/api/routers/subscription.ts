@@ -98,7 +98,7 @@ export const subscriptionRouter = createTRPCRouter({
           cadenceDays: z.number().int().positive().optional(),
           maxPriceCents: z.number().int().optional(),
           constraints: z.record(z.string()).optional(),
-          status: z.enum(["active", "paused", "error"]).optional(),
+          status: z.enum(["active", "paused", "canceled", "error"]).optional(),
         }),
       })
     )
@@ -107,6 +107,10 @@ export const subscriptionRouter = createTRPCRouter({
         id: input.intentId,
         updates: input.updates,
       });
+
+      // Sync changes to linked subscriptions
+      const { syncIntentToSubscriptions } = await import("~/server/db/queries");
+      await syncIntentToSubscriptions(input.intentId);
 
       return {
         success: true,
@@ -126,6 +130,10 @@ export const subscriptionRouter = createTRPCRouter({
         updates: { status: "paused" },
       });
 
+      // Sync status to linked subscriptions
+      const { syncIntentToSubscriptions } = await import("~/server/db/queries");
+      await syncIntentToSubscriptions(input.intentId);
+
       return {
         success: true,
         message: "Subscription paused",
@@ -143,6 +151,10 @@ export const subscriptionRouter = createTRPCRouter({
         updates: { status: "active" },
       });
 
+      // Sync status to linked subscriptions
+      const { syncIntentToSubscriptions } = await import("~/server/db/queries");
+      await syncIntentToSubscriptions(input.intentId);
+
       return {
         success: true,
         message: "Subscription resumed",
@@ -150,11 +162,12 @@ export const subscriptionRouter = createTRPCRouter({
     }),
 
   /**
-   * Delete/cancel a subscription intent
+   * Delete/cancel a subscription intent (soft delete)
    */
   deleteIntent: privateProcedure
     .input(z.object({ intentId: z.string().uuid() }))
     .mutation(async ({ input }) => {
+      // Soft delete: marks as canceled instead of deleting
       await deleteSubscriptionIntent(input.intentId);
 
       return {
@@ -184,11 +197,12 @@ export const subscriptionRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Get or create product
+      // Get or create product with current price
       const product = await getOrCreateProduct({
         name: input.productName,
         url: input.productUrl,
         merchant: input.merchant,
+        currentPriceCents: input.lastPriceCents,
       });
 
       // Create subscription
@@ -308,7 +322,7 @@ export const subscriptionRouter = createTRPCRouter({
    */
   getDashboard: privateProcedure.query(async ({ ctx }) => {
     const [intents, subscriptions, addresses] = await Promise.all([
-      getSubscriptionIntentsByUserId(ctx.userId),
+      getSubscriptionIntentsByUserId(ctx.userId, { includeCanceled: false }), // Exclude canceled by default
       getSubscriptionsByUserId(ctx.userId),
       (async () => {
         const { getUserAddresses } = await import("~/server/db/queries");
