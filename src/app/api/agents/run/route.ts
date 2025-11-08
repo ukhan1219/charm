@@ -166,23 +166,21 @@ async function executeAgentJob({
       }
 
       case "checkout": {
-        // Get subscription and address details
-        const subscription = await db.query.subscription.findFirst({
-          where: eq(subscriptionIntent.id, job.subscriptionId),
-        });
-
+        // Get address details
+        const { address: addressSchema } = await import("~/server/db/schema");
         const address = await db.query.address.findFirst({
-          where: eq(subscriptionIntent.userId, userId),
+          where: eq(addressSchema.id, job.addressId),
         });
 
-        if (!subscription || !address) {
-          throw new Error("Subscription or address not found");
+        if (!address) {
+          throw new Error("Address not found");
         }
 
-        // Execute checkout
+        // Execute checkout - pass runId to prevent duplicate agent run creation
         result = await executeCheckout({
           productUrl: job.productUrl,
-          subscriptionId: job.subscriptionId,
+          subscriptionIntentId: job.subscriptionId, // This is actually a subscriptionIntentId
+          agentRunId: runId, // Pass the runId we already created
           address: {
             street1: address.street1,
             street2: address.street2 || undefined,

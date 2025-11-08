@@ -104,12 +104,12 @@ export default function DashboardPage() {
               className="rounded-lg border p-4 hover:bg-muted/50 transition-colors"
             >
               <div className="flex items-start justify-between">
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <h3 className="font-semibold">{intent.title}</h3>
                   <p className="text-sm text-muted-foreground">
                     Every {intent.cadenceDays} days
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground mt-1 break-all">
                     {intent.productUrl}
                   </p>
                 </div>

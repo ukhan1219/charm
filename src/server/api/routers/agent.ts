@@ -80,7 +80,7 @@ export const agentRouter = createTRPCRouter({
   startCheckout: privateProcedure
     .input(
       z.object({
-        subscriptionId: z.string().uuid(),
+        subscriptionIntentId: z.string().uuid(), // Fixed: should be intentId, not subscriptionId
         productUrl: z.string().url(),
         addressId: z.string().uuid(),
         useNativeSubscription: z.boolean().optional(),
@@ -100,10 +100,10 @@ export const agentRouter = createTRPCRouter({
           };
         }
 
-        // Execute checkout
+        // Execute checkout (will create its own agent run)
         const result = await executeCheckout({
           productUrl: input.productUrl,
-          subscriptionId: input.subscriptionId,
+          subscriptionIntentId: input.subscriptionIntentId, // Fixed parameter name
           address: {
             street1: address.street1,
             street2: address.street2 || undefined,
@@ -116,6 +116,7 @@ export const agentRouter = createTRPCRouter({
             details: {}, // TODO: Get from Stripe
           },
           useNativeSubscription: input.useNativeSubscription,
+          // Don't pass agentRunId - let executeCheckout create its own for TRPC calls
         });
 
         return result;

@@ -13,7 +13,7 @@ export function ToolCallDisplay({ toolName, args }: { toolName: string; args?: a
         <span className="font-medium">Calling {toolName}...</span>
       </div>
       {args && (
-        <pre className="mt-2 text-xs opacity-70">
+        <pre className="mt-2 text-xs opacity-70 overflow-x-auto whitespace-pre-wrap wrap-break-word">
           {JSON.stringify(args, null, 2)}
         </pre>
       )}
@@ -42,15 +42,15 @@ export function ToolResultDisplay({ toolName, result }: { toolName: string; resu
         {isSuccess ? "✓" : "✗"} {toolName} {isSuccess ? "completed" : "failed"}
       </div>
       {result && (
-        <div className="mt-2">
+        <div className="mt-2 wrap-break-word">
           {typeof result === "string" ? (
-            <p className="text-xs">{result}</p>
+            <p className="text-xs break-all">{result}</p>
           ) : result.message ? (
-            <p className="text-xs">{result.message}</p>
+            <p className="text-xs break-all">{result.message}</p>
           ) : result.error ? (
-            <p className="text-xs text-red-600 dark:text-red-400">{result.error}</p>
+            <p className="text-xs text-red-600 dark:text-red-400 break-all">{result.error}</p>
           ) : (
-            <pre className="text-xs opacity-70">
+            <pre className="text-xs opacity-70 overflow-x-auto whitespace-pre-wrap wrap-break-word">
               {JSON.stringify(result, null, 2)}
             </pre>
           )}

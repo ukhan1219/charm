@@ -86,7 +86,7 @@ export async function POST(req: Request) {
         
         const checkoutResult = await executeCheckout({
           productUrl: intent.productUrl,
-          subscriptionId: sub.id,
+          subscriptionIntentId: intent.id, // Fixed: use intentId for renewals
           address: {
             street1: addressData.street1,
             street2: addressData.street2 || undefined,
@@ -99,6 +99,7 @@ export async function POST(req: Request) {
             details: {},
           },
           useNativeSubscription: false, // For renewals, use manual purchase
+          // Don't pass agentRunId - let executeCheckout create its own for renewals
         });
 
         results.processed++;

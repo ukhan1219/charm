@@ -107,8 +107,8 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
                       <div className="space-y-1">
                         {Object.entries(toolArgs).map(([key, value]) => (
                           <div key={key} className="flex gap-2">
-                            <span className="font-mono text-blue-600 dark:text-blue-400">{key}:</span>
-                            <span className="text-foreground">{String(value)}</span>
+                            <span className="font-mono text-blue-600 dark:text-blue-400 shrink-0">{key}:</span>
+                            <span className="text-foreground break-all">{String(value)}</span>
                           </div>
                         ))}
                       </div>
@@ -175,13 +175,13 @@ export function PreviewMessage({ message, isLoading }: { message: UIMessage | an
                     ✓ {part.toolName || "Tool"} completed
                   </div>
                   {part.result && (
-                    <div className="mt-2">
+                    <div className="mt-2 wrap-break-word">
                       {typeof part.result === "string" ? (
-                        <p className="text-xs">{part.result}</p>
+                        <p className="text-xs break-all">{part.result}</p>
                       ) : part.result.message ? (
-                        <p className="text-xs">{part.result.message}</p>
+                        <p className="text-xs break-all">{part.result.message}</p>
                       ) : (
-                        <pre className="text-xs opacity-70">
+                        <pre className="text-xs opacity-70 overflow-x-auto whitespace-pre-wrap wrap-break-word">
                           {JSON.stringify(part.result, null, 2)}
                         </pre>
                       )}

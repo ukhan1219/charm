@@ -1045,7 +1045,7 @@ Be helpful, concise, and friendly.`,
         }),
 
         startCheckout: tool({
-          description: "Start an automated checkout process for a subscription. This initiates a Browserbase session to complete the purchase. CRITICAL: Only call this AFTER the user has explicitly confirmed they want to proceed with checkout (e.g., said 'yes', 'confirm', 'proceed', 'go ahead'). Never call this immediately after creating a subscription intent - always wait for explicit confirmation first.",
+          description: "Start an automated checkout process for a subscription. This initiates a Browserbase session to complete the purchase. CRITICAL: Only call this AFTER the user has explicitly confirmed they want to proceed with checkout (e.g., said 'yes', 'confirm', 'proceed', 'go ahead'). Never call this immediately after creating a subscription intent - always wait for explicit confirmation first. IMPORTANT: If the response includes 'needsSubscription: true' and 'checkoutUrl', you MUST display the checkoutUrl as a clickable link to the user so they can complete their subscription setup.",
           inputSchema: z.object({
             subscriptionIntentId: z.string().uuid().describe("ID of the subscription intent to checkout"),
             productUrl: z.string().url().describe("Product URL to purchase"),
@@ -1076,6 +1076,7 @@ Be helpful, concise, and friendly.`,
 
               // Execute checkout (this will run with maxDuration timeout)
               // In production, use Vercel Queue for true background processing
+              // Note: Chat route doesn't create agent run beforehand, so executeCheckout will create it
               const checkoutResult = await startCheckout({
                 productUrl,
                 subscriptionIntentId, // Pass as subscriptionIntentId, not subscriptionId
@@ -1091,7 +1092,104 @@ Be helpful, concise, and friendly.`,
                   details: {}, // TODO: Get from Stripe
                 },
                 useNativeSubscription,
+                // Don't pass agentRunId here - let executeCheckout create its own
               });
+
+              // If checkout succeeded, check subscription and handle invoice
+              if (checkoutResult.success) {
+                const {
+                  checkUserHasActiveSubscription,
+                  createSubscriptionCheckoutSession,
+                  appendInvoiceItemForSubscription,
+                } = await import("~/lib/integrations/stripe");
+                
+                const { getSubscriptionIntentById } = await import("~/server/db/queries");
+                
+                // Get subscription intent details
+                const intent = await getSubscriptionIntentById(subscriptionIntentId);
+                
+                if (!intent) {
+                  return {
+                    success: false,
+                    error: "Subscription intent not found",
+                  };
+                }
+
+                // Check if user has active Stripe subscription
+                const hasActiveSubscription = await checkUserHasActiveSubscription(dbUser.id);
+
+                if (!hasActiveSubscription) {
+                  // User needs to set up subscription - create Checkout Session
+                  console.log(`💳 User ${dbUser.id} needs to set up subscription`);
+                  
+                  try {
+                    console.log(`Creating checkout session for user ${dbUser.id}`);
+                    const { checkoutUrl, sessionId: stripeSessionId } = await createSubscriptionCheckoutSession({
+                      userId: dbUser.id,
+                      email: clerkUser?.emailAddresses[0]?.emailAddress || "unknown@example.com",
+                      name: clerkUser?.firstName && clerkUser?.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : undefined,
+                    });
+
+                    console.log(`✅ Checkout session created: ${checkoutUrl}`);
+
+                    return {
+                      success: true,
+                      runId,
+                      needsSubscription: true,
+                      checkoutUrl,
+                      stripeSessionId,
+                      message: `Checkout completed! Please complete your subscription setup to enable automatic monthly billing. Subscription checkout URL: ${checkoutUrl}`,
+                    };
+                  } catch (error) {
+                    console.error("❌ Failed to create subscription checkout:", error);
+                    return {
+                      success: false,
+                      error: error instanceof Error ? error.message : "Failed to create subscription checkout session",
+                    };
+                  }
+                } else {
+                  // User has active subscription - append invoice item
+                  console.log(`💰 Appending invoice item for user ${dbUser.id}`);
+                  
+                  try {
+                    // Get product price from checkout result or use maxPriceCents as fallback
+                    const productPriceCents = checkoutResult.orderDetails?.priceCents || intent.maxPriceCents || 0;
+                    
+                    if (productPriceCents === 0) {
+                      console.warn("Warning: Product price is 0, may need manual adjustment");
+                    }
+
+                    const invoiceResult = await appendInvoiceItemForSubscription({
+                      userId: dbUser.id,
+                      subscriptionIntentId,
+                      productName: intent.title,
+                      productPriceCents,
+                      cadenceDays: intent.cadenceDays,
+                      orderId: checkoutResult.orderId,
+                    });
+
+                    console.log(`✅ Invoice item created: $${invoiceResult.amount / 100} - ${invoiceResult.description}`);
+
+                    return {
+                      success: true,
+                      runId,
+                      sessionId: checkoutResult.sessionId,
+                      invoiceItemId: invoiceResult.invoiceItemId,
+                      invoiceAmount: invoiceResult.amount,
+                      invoiceDescription: invoiceResult.description,
+                      message: `Checkout completed! ${invoiceResult.description} has been added to your monthly invoice.`,
+                    };
+                  } catch (error) {
+                    console.error("Failed to append invoice item:", error);
+                    return {
+                      success: true,
+                      runId,
+                      warning: "Checkout succeeded but failed to add invoice item. Please contact support.",
+                      error: error instanceof Error ? error.message : "Unknown error",
+                    };
+                  }
+                }
+              }
 
               return {
                 success: checkoutResult.success,

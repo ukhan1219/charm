@@ -663,6 +663,94 @@ export async function completeStripeOnboarding({
 }
 
 /**
+ * Check if user has active base Stripe subscription
+ * Returns true if user has active $1/month service subscription
+ */
+export async function checkUserHasActiveSubscription(userId: string): Promise<boolean> {
+  console.log(`🔍 Checking subscription for user: ${userId}`);
+  
+  const serviceFeeRecord = await db.query.stripeFee.findFirst({
+    where: eq(stripeFee.userId, userId),
+  });
+
+  console.log(`📊 Subscription found:`, serviceFeeRecord ? {
+    id: serviceFeeRecord.id,
+    stripeSubscriptionId: serviceFeeRecord.stripeSubscriptionId,
+    status: serviceFeeRecord.status,
+  } : 'None');
+
+  const hasActive = serviceFeeRecord?.status === "active";
+  console.log(`✅ Has active subscription: ${hasActive}`);
+
+  return hasActive;
+}
+
+/**
+ * Create Stripe Checkout Session for base subscription
+ * Used when user needs to set up their $1/month service subscription
+ */
+export async function createSubscriptionCheckoutSession({
+  userId,
+  email,
+  name,
+}: {
+  userId: string;
+  email: string;
+  name?: string;
+}): Promise<{
+  checkoutUrl: string;
+  sessionId: string;
+}> {
+  if (!SERVICE_FEE_PRICE_ID) {
+    throw new Error(
+      "STRIPE_SERVICE_FEE_PRICE_ID not configured. Please set the price ID from your Stripe Dashboard."
+    );
+  }
+
+  // Get or create Stripe customer
+  const { customerId } = await createStripeCustomerForUser({
+    userId,
+    email,
+    name,
+  });
+
+  // Create Checkout Session for subscription
+  const appUrl = env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    mode: "subscription",
+    line_items: [
+      {
+        price: SERVICE_FEE_PRICE_ID,
+        quantity: 1,
+      },
+    ],
+    success_url: `${appUrl}/dashboard?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${appUrl}/dashboard?checkout=cancel`,
+    metadata: {
+      userId,
+      type: "service_fee_subscription",
+    },
+    subscription_data: {
+      metadata: {
+        userId,
+        type: "service_fee",
+      },
+    },
+  });
+
+  if (!session.url) {
+    throw new Error("Failed to create Checkout Session URL");
+  }
+
+  return {
+    checkoutUrl: session.url,
+    sessionId: session.id,
+  };
+}
+
+/**
  * EXAMPLES OF PRORATED BILLING
  * 
  * Example 1: 2-week cadence (14 days)

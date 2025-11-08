@@ -183,6 +183,16 @@ export async function getSubscriptionIntentsByUserId(userId: string) {
 }
 
 /**
+ * Get subscription intent by ID
+ */
+export async function getSubscriptionIntentById(intentId: string) {
+  const { subscriptionIntent } = await import("./schema");
+  return db.query.subscriptionIntent.findFirst({
+    where: eq(subscriptionIntent.id, intentId),
+  });
+}
+
+/**
  * Update subscription intent
  */
 export async function updateSubscriptionIntent({

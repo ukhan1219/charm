@@ -73,6 +73,7 @@ export async function executeCheckout({
   address,
   paymentMethod,
   useNativeSubscription = false,
+  agentRunId: providedAgentRunId,
 }: {
   productUrl: string;
   subscriptionIntentId: string;
@@ -88,32 +89,44 @@ export async function executeCheckout({
     details: any;
   };
   useNativeSubscription?: boolean;
+  agentRunId?: string; // Optional: if provided, don't create a new agent run
 }): Promise<CheckoutResult> {
   const stagehand = createStagehand();
   let browserbaseSessionId: string | undefined;
-  let agentRunId: string | undefined;
+  let agentRunId: string | undefined = providedAgentRunId;
 
   try {
     await stagehand.init();
     browserbaseSessionId = stagehand.browserbaseSessionId;
 
-    // Log agent run start - use intentId (not subscriptionId) since subscription doesn't exist yet
-    const [agentRunRecord] = await db
-      .insert(agentRun)
-      .values({
-        intentId: subscriptionIntentId, // Use intentId, not subscriptionId (subscription table doesn't exist yet)
-        phase: "checkout",
-        input: {
-          productUrl,
-          address,
-          useNativeSubscription,
-        },
-        browserbaseSessionId: browserbaseSessionId || null,
-        createdAt: new Date(),
-      })
-      .returning();
+    // Only create agent run if not provided (for backward compatibility)
+    if (!agentRunId) {
+      const [agentRunRecord] = await db
+        .insert(agentRun)
+        .values({
+          intentId: subscriptionIntentId, // Use intentId, not subscriptionId (subscription table doesn't exist yet)
+          phase: "checkout",
+          input: {
+            productUrl,
+            address,
+            useNativeSubscription,
+          },
+          browserbaseSessionId: browserbaseSessionId || null,
+          createdAt: new Date(),
+        })
+        .returning();
 
-    agentRunId = agentRunRecord?.id;
+      agentRunId = agentRunRecord?.id;
+    } else {
+      // Update existing agent run with browserbase session ID
+      const { eq } = await import("drizzle-orm");
+      await db
+        .update(agentRun)
+        .set({
+          browserbaseSessionId: browserbaseSessionId || null,
+        })
+        .where(eq(agentRun.id, agentRunId));
+    }
 
     console.log(`🛒 Starting checkout for ${productUrl}`);
 

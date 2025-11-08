@@ -11,7 +11,7 @@ import {
 } from "~/server/db/queries";
 import { db } from "~/server/db";
 import { stripeFee, subscription as subscriptionTable } from "~/server/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 // Disable body parsing - Stripe needs raw body for signature verification
 export const runtime = "nodejs";
@@ -69,6 +69,14 @@ export async function POST(req: Request) {
   // Handle different event types
   try {
     switch (event.type) {
+      case "checkout.session.completed":
+        await handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+        break;
+
+      case "customer.subscription.created":
+        await handleSubscriptionCreated(event.data.object as Stripe.Subscription);
+        break;
+
       case "invoice.payment_succeeded":
         await handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
         break;
@@ -108,6 +116,151 @@ export async function POST(req: Request) {
       { error: "Webhook handler failed" },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Handle checkout.session.completed
+ * Checkout Session completed → check if base subscription was created
+ * If so, look for pending subscription intents and append invoice items
+ */
+async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+  console.log(`✅ Checkout Session completed: ${session.id}`);
+
+  // Only handle subscription mode checkouts
+  if (session.mode !== "subscription") {
+    console.log("Checkout Session is not for subscription, skipping");
+    return;
+  }
+
+  // Extract userId from metadata
+  const userId = session.metadata?.userId;
+  if (!userId) {
+    console.log("No userId in session metadata, skipping");
+    return;
+  }
+
+  console.log(`Processing subscription setup for user ${userId}`);
+
+  // Get the subscription created by this checkout
+  const subscriptionId = session.subscription as string;
+  if (!subscriptionId) {
+    console.log("No subscription ID in session, skipping");
+    return;
+  }
+
+  // Check if subscription already exists (avoid duplicates)
+  const existing = await db.query.stripeFee.findFirst({
+    where: eq(stripeFee.stripeSubscriptionId, subscriptionId),
+  });
+
+  if (existing) {
+    console.log(`Subscription ${subscriptionId} already exists in database, skipping`);
+    return;
+  }
+
+  // Save to stripeFee table
+  await db.insert(stripeFee).values({
+    userId,
+    stripeSubscriptionId: subscriptionId,
+    amount: "100", // $1.00
+    status: "active",
+    createdAt: new Date(),
+  });
+
+  console.log(`✅ Base subscription ${subscriptionId} saved for user ${userId}`);
+
+  // TODO: Check for pending subscription intents that need invoice items
+  // This will be handled by the subscription.created webhook
+}
+
+/**
+ * Handle customer.subscription.created
+ * Base subscription created → look for pending checkouts and append invoice items
+ */
+async function handleSubscriptionCreated(subscription: Stripe.Subscription) {
+  console.log(`✅ Subscription created: ${subscription.id}`);
+
+  // Only handle service fee subscriptions
+  const subscriptionType = subscription.metadata?.type;
+  if (subscriptionType !== "service_fee") {
+    console.log("Subscription is not service fee type, skipping");
+    return;
+  }
+
+  const userId = subscription.metadata?.userId;
+  if (!userId) {
+    console.log("No userId in subscription metadata, skipping");
+    return;
+  }
+
+  console.log(`Processing pending subscription intents for user ${userId}`);
+
+  // Get all active subscription intents for this user that don't have subscriptions yet
+  const { subscriptionIntent: subscriptionIntentTable, subscription: subscriptionTable, agentRun: agentRunTable } = await import("~/server/db/schema");
+  
+  const pendingIntents = await db.query.subscriptionIntent.findMany({
+    where: and(
+      eq(subscriptionIntentTable.userId, userId),
+      eq(subscriptionIntentTable.status, "active")
+    ),
+  });
+
+  console.log(`Found ${pendingIntents.length} pending intents for user ${userId}`);
+
+  // For each intent, check if there's a successful agent run (checkout completed)
+  // but no subscription record yet (meaning invoice item wasn't appended)
+  for (const intent of pendingIntents) {
+    // Check if this intent has a successful checkout
+    const successfulCheckout = await db.query.agentRun.findFirst({
+      where: and(
+        eq(agentRunTable.intentId, intent.id),
+        eq(agentRunTable.phase, "done")
+      ),
+      orderBy: (agentRun, { desc }) => [desc(agentRun.createdAt)],
+    });
+
+    if (!successfulCheckout) {
+      console.log(`No successful checkout for intent ${intent.id}, skipping`);
+      continue;
+    }
+
+    // Check if invoice item already exists by looking at subscription records
+    const existingSubscription = await db.query.subscription.findFirst({
+      where: eq(subscriptionTable.intentId, intent.id),
+    });
+
+    if (existingSubscription) {
+      console.log(`Subscription already exists for intent ${intent.id}, skipping`);
+      continue;
+    }
+
+    // Append invoice item for this intent
+    console.log(`📦 Appending invoice item for intent ${intent.id}: ${intent.title}`);
+    
+    try {
+      const { appendInvoiceItemForSubscription } = await import("~/lib/integrations/stripe");
+      
+      // Use maxPriceCents from intent as product price
+      const productPriceCents = intent.maxPriceCents || 0;
+      
+      if (productPriceCents === 0) {
+        console.warn(`Warning: Product price is 0 for intent ${intent.id}`);
+        continue;
+      }
+
+      await appendInvoiceItemForSubscription({
+        userId,
+        subscriptionIntentId: intent.id,
+        productName: intent.title,
+        productPriceCents,
+        cadenceDays: intent.cadenceDays,
+      });
+
+      console.log(`✅ Invoice item appended for intent ${intent.id}`);
+    } catch (error) {
+      console.error(`Failed to append invoice item for intent ${intent.id}:`, error);
+    }
   }
 }
 
